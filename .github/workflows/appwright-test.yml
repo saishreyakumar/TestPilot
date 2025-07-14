@@ -1,0 +1,348 @@
+name: AppWright Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      org_id:
+        description: "Organization ID"
+        required: true
+        default: "qualgent"
+      app_version_id:
+        description: "App Version ID"
+        required: true
+        default: "latest"
+      test_filter:
+        description: "Test file filter (e.g., tests/smoke/ or tests/onboarding.spec.js)"
+        required: false
+        default: "tests/"
+      target:
+        description: "Target platform"
+        required: false
+        default: "emulator"
+        type: choice
+        options:
+          - emulator
+          - device
+          - browserstack
+      priority:
+        description: "Job priority"
+        required: false
+        default: "normal"
+        type: choice
+        options:
+          - low
+          - normal
+          - high
+          - urgent
+
+env:
+  QGJOB_SERVER_URL: ${{ secrets.QGJOB_SERVER_URL || 'http://localhost:5000' }}
+  ORG_ID: ${{ github.event.inputs.org_id || 'qualgent' }}
+  APP_VERSION_ID: ${{ github.event.inputs.app_version_id || github.sha }}
+  TARGET: ${{ github.event.inputs.target || 'emulator' }}
+  PRIORITY: ${{ github.event.inputs.priority || 'normal' }}
+
+jobs:
+  discover-tests:
+    runs-on: ubuntu-latest
+    outputs:
+      test-files: ${{ steps.find-tests.outputs.test-files }}
+      test-count: ${{ steps.find-tests.outputs.test-count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find test files
+        id: find-tests
+        run: |
+          # Find test files based on filter
+          TEST_FILTER="${{ github.event.inputs.test_filter || 'tests/' }}"
+
+          if [[ -f "$TEST_FILTER" ]]; then
+            # Single file specified
+            TEST_FILES="[\"$TEST_FILTER\"]"
+          elif [[ -d "$TEST_FILTER" ]]; then
+            # Directory specified - find all .spec.js files
+            TEST_FILES=$(find "$TEST_FILTER" -name "*.spec.js" -type f | jq -R -s -c 'split("\n")[:-1]')
+          else
+            # Pattern specified - use find with name pattern
+            TEST_FILES=$(find tests/ -name "$TEST_FILTER" -type f | jq -R -s -c 'split("\n")[:-1]')
+          fi
+
+          # Fallback to default if no tests found
+          if [[ "$TEST_FILES" == "[]" ]]; then
+            echo "No tests found with filter: $TEST_FILTER"
+            echo "Falling back to all .spec.js files in tests/"
+            TEST_FILES=$(find tests/ -name "*.spec.js" -type f | jq -R -s -c 'split("\n")[:-1]')
+          fi
+
+          TEST_COUNT=$(echo "$TEST_FILES" | jq length)
+
+          echo "test-files=$TEST_FILES" >> $GITHUB_OUTPUT
+          echo "test-count=$TEST_COUNT" >> $GITHUB_OUTPUT
+
+          echo "Found $TEST_COUNT test files:"
+          echo "$TEST_FILES" | jq -r '.[]'
+
+  submit-tests:
+    needs: discover-tests
+    runs-on: ubuntu-latest
+    if: needs.discover-tests.outputs.test-count > 0
+    strategy:
+      fail-fast: false
+      matrix:
+        test-file: ${{ fromJson(needs.discover-tests.outputs.test-files) }}
+    outputs:
+      job-ids: ${{ steps.collect-jobs.outputs.job-ids }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Install qgjob CLI
+        run: |
+          cd cli
+          pip install -e .
+
+      - name: Check server health
+        run: |
+          qgjob health || {
+            echo "::error::Job server is not available at $QGJOB_SERVER_URL"
+            echo "Please ensure the QualGent Job Server is running and accessible."
+            exit 1
+          }
+
+      - name: Submit test job
+        id: submit-job
+        run: |
+          echo "Submitting test: ${{ matrix.test-file }}"
+
+          # Submit job and capture output
+          JOB_OUTPUT=$(qgjob submit \
+            --org-id="$ORG_ID" \
+            --app-version-id="$APP_VERSION_ID" \
+            --test="${{ matrix.test-file }}" \
+            --target="$TARGET" \
+            --priority="$PRIORITY")
+
+          # Extract job ID from output
+          JOB_ID=$(echo "$JOB_OUTPUT" | grep "Job ID:" | sed 's/.*Job ID: //' | head -1)
+
+          if [[ -z "$JOB_ID" ]]; then
+            echo "::error::Failed to extract job ID from submission"
+            exit 1
+          fi
+
+          echo "job-id=$JOB_ID" >> $GITHUB_OUTPUT
+          echo "test-file=${{ matrix.test-file }}" >> $GITHUB_OUTPUT
+
+          echo "::notice::Submitted test job $JOB_ID for ${{ matrix.test-file }}"
+
+      - name: Store job information
+        run: |
+          mkdir -p job-results
+          echo "${{ steps.submit-job.outputs.job-id }}:${{ matrix.test-file }}" >> job-results/jobs.txt
+
+      - name: Upload job list
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-list-${{ strategy.job-index }}
+          path: job-results/jobs.txt
+          retention-days: 1
+
+  wait-for-completion:
+    needs: [discover-tests, submit-tests]
+    runs-on: ubuntu-latest
+    if: needs.discover-tests.outputs.test-count > 0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Install qgjob CLI
+        run: |
+          cd cli
+          pip install -e .
+
+      - name: Download all job lists
+        uses: actions/download-artifact@v4
+        with:
+          pattern: job-list-*
+          merge-multiple: true
+          path: job-results/
+
+      - name: Collect job IDs
+        id: collect-jobs
+        run: |
+          # Combine all job files
+          cat job-results/jobs.txt > all-jobs.txt || touch all-jobs.txt
+
+          echo "All submitted jobs:"
+          cat all-jobs.txt
+
+          # Extract just job IDs
+          JOB_IDS=$(cut -d: -f1 all-jobs.txt | tr '\n' ' ')
+          echo "job-ids=$JOB_IDS" >> $GITHUB_OUTPUT
+
+          echo "Monitoring jobs: $JOB_IDS"
+
+      - name: Wait for job completion
+        run: |
+          JOB_IDS="${{ steps.collect-jobs.outputs.job-ids }}"
+
+          if [[ -z "$JOB_IDS" ]]; then
+            echo "::error::No job IDs found to monitor"
+            exit 1
+          fi
+
+          echo "Waiting for completion of jobs: $JOB_IDS"
+
+          # Create arrays to track jobs
+          declare -a PENDING_JOBS
+          declare -a FAILED_JOBS
+          declare -a COMPLETED_JOBS
+
+          # Initialize pending jobs array
+          for job_id in $JOB_IDS; do
+            PENDING_JOBS+=("$job_id")
+          done
+
+          # Poll until all jobs complete
+          MAX_WAIT_TIME=1800  # 30 minutes
+          POLL_INTERVAL=10    # 10 seconds
+          ELAPSED_TIME=0
+
+          while [[ ${#PENDING_JOBS[@]} -gt 0 && $ELAPSED_TIME -lt $MAX_WAIT_TIME ]]; do
+            echo "Checking status of ${#PENDING_JOBS[@]} remaining jobs..."
+            
+            NEW_PENDING=()
+            
+            for job_id in "${PENDING_JOBS[@]}"; do
+              STATUS=$(qgjob status --job-id="$job_id" 2>/dev/null | grep "Status:" | sed 's/.*Status: //' | sed 's/\x1b\[[0-9;]*m//g' | tr -d '[:space:]' | head -1)
+              
+              case "$STATUS" in
+                "COMPLETED")
+                  COMPLETED_JOBS+=("$job_id")
+                  echo "::notice::Job $job_id completed successfully"
+                  ;;
+                "FAILED")
+                  FAILED_JOBS+=("$job_id")
+                  echo "::error::Job $job_id failed"
+                  ;;
+                "CANCELLED")
+                  FAILED_JOBS+=("$job_id")
+                  echo "::error::Job $job_id was cancelled"
+                  ;;
+                *)
+                  NEW_PENDING+=("$job_id")
+                  echo "Job $job_id status: $STATUS (still waiting...)"
+                  ;;
+              esac
+            done
+            
+            PENDING_JOBS=("${NEW_PENDING[@]}")
+            
+            if [[ ${#PENDING_JOBS[@]} -gt 0 ]]; then
+              sleep $POLL_INTERVAL
+              ELAPSED_TIME=$((ELAPSED_TIME + POLL_INTERVAL))
+            fi
+          done
+
+          # Check for timeout
+          if [[ $ELAPSED_TIME -ge $MAX_WAIT_TIME ]]; then
+            echo "::error::Timeout waiting for jobs to complete after $MAX_WAIT_TIME seconds"
+            echo "::error::Still pending: ${PENDING_JOBS[*]}"
+            exit 1
+          fi
+
+          # Report final results
+          echo "::notice::Test execution completed"
+          echo "::notice::Completed jobs: ${#COMPLETED_JOBS[@]}"
+          echo "::notice::Failed jobs: ${#FAILED_JOBS[@]}"
+
+          if [[ ${#FAILED_JOBS[@]} -gt 0 ]]; then
+            echo "::error::Some tests failed. Failed job IDs: ${FAILED_JOBS[*]}"
+            
+            # Get detailed failure information
+            echo "Failure details:"
+            for job_id in "${FAILED_JOBS[@]}"; do
+              echo "--- Job $job_id ---"
+              qgjob status --job-id="$job_id" || true
+            done
+            
+            exit 1
+          fi
+
+          echo "::notice::All tests passed successfully!"
+
+  report-results:
+    needs: [discover-tests, submit-tests, wait-for-completion]
+    runs-on: ubuntu-latest
+    if: always() && needs.discover-tests.outputs.test-count > 0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Install qgjob CLI
+        run: |
+          cd cli
+          pip install -e .
+
+      - name: Generate test report
+        run: |
+          echo "# AppWright Test Results" > test-report.md
+          echo "" >> test-report.md
+          echo "**Organization:** $ORG_ID" >> test-report.md
+          echo "**App Version:** $APP_VERSION_ID" >> test-report.md
+          echo "**Target:** $TARGET" >> test-report.md
+          echo "**Tests Found:** ${{ needs.discover-tests.outputs.test-count }}" >> test-report.md
+          echo "" >> test-report.md
+
+          # Get server stats
+          echo "## Server Statistics" >> test-report.md
+          qgjob stats >> test-report.md || echo "Failed to get server stats" >> test-report.md
+          echo "" >> test-report.md
+
+          # List recent jobs for this org and app version
+          echo "## Recent Jobs" >> test-report.md
+          qgjob list --org-id="$ORG_ID" --app-version-id="$APP_VERSION_ID" --limit=50 >> test-report.md || echo "Failed to get job list" >> test-report.md
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: test-report.md
+          retention-days: 30
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            try {
+              const report = fs.readFileSync('test-report.md', 'utf8');
+              
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## AppWright Test Results\n\n${report}`
+              });
+            } catch (error) {
+              console.log('Failed to post comment:', error);
+            }
