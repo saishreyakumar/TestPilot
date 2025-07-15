@@ -2,22 +2,54 @@
 
 ## 🚢 Docker Quick Start
 
-You can run the backend and Redis with Docker:
+The easiest way to run TestPilot is with Docker. This will start both the backend service and Redis database:
+
+### Quick Start with Docker
 
 ```bash
-# Build and start the backend + Redis
-# (from project root)
-docker-compose up --build
+# Build and start all services
+docker-compose up --build -d
 
-# Backend will be available at http://localhost:5000
-# Redis will be available at localhost:6379
+# Check status
+docker-compose ps
+
+# View logs
+docker-compose logs -f backend
 ```
 
-To stop and remove containers:
+### Access Points
+
+- **Backend API**: http://localhost:8080
+- **Health Check**: http://localhost:8080/health
+- **Redis**: localhost:6379
+
+### Docker Commands
 
 ```bash
+# Start services
+docker-compose up -d
+
+# Stop services
 docker-compose down
+
+# Rebuild and restart
+docker-compose up --build -d
+
+# View logs
+docker-compose logs backend
+docker-compose logs redis
+
+# Clean up everything
+docker-compose down -v --remove-orphans
 ```
+
+### Docker Configuration
+
+The project includes:
+
+- `Dockerfile` - Backend service container
+- `docker-compose.yml` - Multi-service orchestration
+- `.dockerignore` - Optimized build context
 
 ---
 
@@ -296,6 +328,7 @@ Total Groups    5
 ### Base URL
 
 - Development: `http://localhost:5000`
+- Docker: `http://localhost:8080`
 - Production: `https://your-domain.com`
 
 ### Endpoints
