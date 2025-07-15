@@ -16,7 +16,7 @@ Test 3 → Install app → Run test → Uninstall
 Result: 3 app installations, wasted time/resources
 ```
 
-### Our Solution
+### Solution
 
 Intelligent job grouping by `app_version_id`:
 
@@ -437,136 +437,6 @@ strategy:
     app_version: [v1.2.3, v1.2.4]
 ```
 
-## 📊 Performance & Scaling
-
-### Efficiency Improvements
-
-Real-world efficiency gains from job grouping:
-
-```
-Small teams (5-10 tests): 25-40% improvement
-Medium teams (20-50 tests): 50-65% improvement
-Large teams (100+ tests): 70-80% improvement
-```
-
-### Horizontal Scaling
-
-```bash
-# Add more workers
-curl -X POST http://server:5000/workers \
-  -d '{"name": "Worker-2", "target_types": ["emulator"]}'
-
-# Scale backend (with Redis)
-# Run multiple instances pointing to same Redis
-python3 backend/app.py  # Instance 1
-python3 backend/app.py  # Instance 2
-python3 backend/app.py  # Instance 3
-```
-
-## 🔍 Monitoring & Debugging
-
-### Health Checks
-
-```bash
-# CLI health check
-qgjob health
-
-# API health check
-curl http://localhost:5000/health
-
-# Response
-{
-  "status": "healthy",
-  "storage": "redis",
-  "redis_connected": true,
-  "workers_active": 3,
-  "jobs_pending": 5
-}
-```
-
-### Logging
-
-```bash
-# Enable debug logging
-export DEBUG=true
-python3 backend/app.py
-
-# View logs
-tail -f app.log
-```
-
-### Troubleshooting
-
-Common issues and solutions:
-
-```bash
-# Redis connection error
-Error: ModuleNotFoundError: No module named 'redis'
-Solution: pip install redis
-
-# Server not starting
-Error: Address already in use
-Solution: killall python3 or use different port
-
-# CLI not found
-Error: qgjob: command not found
-Solution: cd cli && pip install -e .
-```
-
-## 🧪 Testing & Validation
-
-### System Test
-
-Create a test script to validate the complete system:
-
-```python
-# test_system.py
-import requests
-import time
-
-# Submit test jobs
-jobs = []
-for test in ["login.spec.js", "signup.spec.js", "checkout.spec.js"]:
-    response = requests.post("http://localhost:5000/jobs", json={
-        "org_id": "test-org",
-        "app_version_id": "v1.2.3",
-        "test_path": f"tests/{test}",
-        "target": "emulator"
-    })
-    jobs.append(response.json()["job_id"])
-
-# Check grouping
-time.sleep(2)
-stats = requests.get("http://localhost:5000/stats").json()
-print(f"Jobs submitted: {len(jobs)}")
-print(f"Groups created: {stats['groups']['total']}")
-print("✅ Job grouping working!")
-```
-
-### Load Testing
-
-```bash
-# Install locust
-pip install locust
-
-# Create load test
-# locustfile.py
-from locust import HttpUser, task
-
-class TestUser(HttpUser):
-    @task
-    def submit_job(self):
-        self.client.post("/jobs", json={
-            "org_id": "load-test",
-            "app_version_id": "v1.0.0",
-            "test_path": "tests/load.spec.js",
-            "target": "emulator"
-        })
-
-# Run load test
-locust -f locustfile.py --host=http://localhost:5000
-```
-
 ## 🚀 Next Steps & Extensions
 
 ### Planned Enhancements
@@ -576,43 +446,3 @@ locust -f locustfile.py --host=http://localhost:5000
 3. **Advanced Scheduling** - Time-based job execution
 4. **Test Result Storage** - Detailed execution reports
 5. **Multi-Region Support** - Global worker distribution
-
-### Custom Extensions
-
-```python
-# Custom priority algorithm
-class CustomScheduler(JobScheduler):
-    def prioritize_jobs(self, jobs):
-        # Custom logic here
-        return sorted(jobs, key=lambda x: x.custom_priority)
-
-# Plugin system
-from qgjob.plugins import register_plugin
-
-@register_plugin('slack-notify')
-def notify_completion(job):
-    # Send Slack notification
-    pass
-```
-
-## 📝 Contributing
-
-1. Fork the repository
-2. Create feature branch: `git checkout -b feature/awesome-feature`
-3. Commit changes: `git commit -m 'Add awesome feature'`
-4. Push branch: `git push origin feature/awesome-feature`
-5. Open pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 📞 Support
-
-- **Documentation**: This README
-- **Issues**: GitHub Issues
-- **Discussions**: GitHub Discussions
-
-**Built with ❤️ for efficient mobile test automation**
