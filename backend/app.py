@@ -7,6 +7,7 @@ status checking, and worker management.
 
 import os
 import sys
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -21,25 +22,62 @@ from shared import (
     generate_job_id, generate_group_id, generate_worker_id
 )
 from job_store import JobStore
+from redis_job_store import RedisJobStore
 from scheduler import JobScheduler
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
+# Initialize job store with Redis (fallback to in-memory)
+def create_job_store():
+    """Create job store with Redis if available, fallback to in-memory"""
+    from config import get_config
+    config = get_config()
+    
+    if config.USE_REDIS:
+        try:
+            logger.info("Attempting to connect to Redis...")
+            job_store = RedisJobStore(config.REDIS_URL)
+            logger.info("✅ Using Redis for job storage")
+            return job_store
+        except Exception as e:
+            logger.warning(f"⚠️ Redis connection failed: {e}")
+            logger.info("🔄 Falling back to in-memory storage")
+    
+    # Fallback to in-memory storage
+    logger.info("📝 Using in-memory job storage")
+    return JobStore()
+
 # Initialize components
-job_store = JobStore()
+job_store = create_job_store()
 scheduler = JobScheduler(job_store)
 
 
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({
+    storage_type = "redis" if isinstance(job_store, RedisJobStore) else "in-memory"
+    
+    health_data = {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0"
-    })
+        "version": "1.0.0",
+        "storage": storage_type
+    }
+    
+    # Add Redis-specific health info
+    if isinstance(job_store, RedisJobStore):
+        try:
+            job_store.redis.ping()
+            health_data["redis_status"] = "connected"
+        except Exception as e:
+            health_data["redis_status"] = f"error: {str(e)}"
+    
+    return jsonify(health_data)
 
 
 @app.route('/jobs', methods=['POST'])
@@ -255,11 +293,16 @@ def get_stats():
 
 
 if __name__ == '__main__':
+    from config import get_config
+    config = get_config()
+    
+    logger.info("🚀 Starting QualGent Job Orchestrator")
+    logger.info(f"📊 Storage: {'Redis' if isinstance(job_store, RedisJobStore) else 'In-Memory'}")
+    logger.info(f"🌐 Server: http://{config.HOST}:{config.PORT}")
+    logger.info(f"🔧 Environment: {os.environ.get('ENVIRONMENT', 'development')}")
+    
     # Start the scheduler in a background thread
     scheduler.start()
     
     # Run the Flask app
-    port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('DEBUG', 'false').lower() == 'true'
-    
-    app.run(host='0.0.0.0', port=port, debug=debug) 
+    app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG) 
