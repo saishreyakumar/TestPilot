@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.log
+*.env
+*.egg-info/
+.git/
+.gitignore
+.DS_Store
+.vscode/
+.env*
+node_modules/
+cli/qgjob.egg-info/ 

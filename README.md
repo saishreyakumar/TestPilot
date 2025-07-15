@@ -1,5 +1,26 @@
 # QualGent Backend Coding Challenge
 
+## 🚢 Docker Quick Start
+
+You can run the backend and Redis with Docker:
+
+```bash
+# Build and start the backend + Redis
+# (from project root)
+docker-compose up --build
+
+# Backend will be available at http://localhost:5000
+# Redis will be available at localhost:6379
+```
+
+To stop and remove containers:
+
+```bash
+docker-compose down
+```
+
+---
+
 A complete test automation orchestration platform that intelligently groups and executes AppWright tests across mobile devices, emulators, and cloud platforms.
 
 ## 🎯 Problem Statement & Solution

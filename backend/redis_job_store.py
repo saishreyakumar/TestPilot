@@ -53,7 +53,16 @@ class RedisJobStore:
             if data.get(key):
                 if isinstance(data[key], datetime):
                     data[key] = data[key].isoformat()
-        return data
+        
+        # Convert complex objects to JSON strings
+        serialized_data = {}
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                serialized_data[key] = json.dumps(value)
+            else:
+                serialized_data[key] = str(value) if value is not None else ""
+        
+        return serialized_data
     
     def _deserialize_job(self, data: dict) -> Job:
         """Deserialize Redis dict to Job object"""
@@ -90,7 +99,16 @@ class RedisJobStore:
         data = group.to_dict()
         if isinstance(data['created_at'], datetime):
             data['created_at'] = data['created_at'].isoformat()
-        return data
+        
+        # Convert complex objects to JSON strings
+        serialized_data = {}
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                serialized_data[key] = json.dumps(value)
+            else:
+                serialized_data[key] = str(value) if value is not None else ""
+        
+        return serialized_data
     
     def _deserialize_group(self, data: dict) -> JobGroup:
         """Deserialize Redis dict to JobGroup object"""
@@ -113,7 +131,16 @@ class RedisJobStore:
         data = worker.to_dict()
         if isinstance(data['last_heartbeat'], datetime):
             data['last_heartbeat'] = data['last_heartbeat'].isoformat()
-        return data
+        
+        # Convert complex objects to JSON strings
+        serialized_data = {}
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                serialized_data[key] = json.dumps(value)
+            else:
+                serialized_data[key] = str(value) if value is not None else ""
+        
+        return serialized_data
     
     def _deserialize_worker(self, data: dict) -> Worker:
         """Deserialize Redis dict to Worker object"""
@@ -256,6 +283,10 @@ class RedisJobStore:
                 if group.app_version_id == app_version_id:
                     return group
             return None
+    
+    def get_group_by_app_version(self, org_id: str, app_version_id: str) -> Optional[JobGroup]:
+        """Alias for find_group_by_app_version for compatibility"""
+        return self.find_group_by_app_version(org_id, app_version_id)
     
     # Worker operations
     def add_worker(self, worker: Worker) -> None:

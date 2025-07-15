@@ -17,7 +17,7 @@ from colorama import init, Fore, Style
 init()
 
 # Default configuration
-DEFAULT_SERVER_URL = "http://localhost:5000"
+DEFAULT_SERVER_URL = "http://localhost:8080"
 DEFAULT_TIMEOUT = 30
 
 

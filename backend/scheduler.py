@@ -132,7 +132,8 @@ class JobScheduler:
         with self._lock:
             # Get all pending job groups
             pending_groups = []
-            for group in self.job_store.groups.values():
+            all_groups = self.job_store.list_groups()
+            for group in all_groups:
                 if group.status == JobStatus.PENDING and group.jobs:
                     pending_groups.append(group)
             
@@ -200,7 +201,8 @@ class JobScheduler:
         """Mark workers as offline if they haven't sent heartbeat recently"""
         cutoff_time = datetime.utcnow() - timedelta(seconds=self.worker_timeout)
         
-        for worker in self.job_store.workers.values():
+        all_workers = self.job_store.list_workers()
+        for worker in all_workers:
             if (worker.last_heartbeat < cutoff_time and 
                 worker.status != "offline"):
                 
@@ -216,7 +218,8 @@ class JobScheduler:
         """Reassign jobs from a failed worker"""
         jobs_to_reassign = []
         
-        for job in self.job_store.jobs.values():
+        all_jobs = self.job_store.list_jobs()
+        for job in all_jobs:
             if (job.worker_id == worker_id and 
                 job.status in [JobStatus.QUEUED, JobStatus.RUNNING]):
                 jobs_to_reassign.append(job)
@@ -244,7 +247,8 @@ class JobScheduler:
         current_time = datetime.utcnow()
         job_timeout = timedelta(minutes=30)  # 30 minute timeout for jobs
         
-        for job in self.job_store.jobs.values():
+        all_jobs = self.job_store.list_jobs()
+        for job in all_jobs:
             if (job.status == JobStatus.RUNNING and 
                 job.started_at and 
                 current_time - job.started_at > job_timeout):

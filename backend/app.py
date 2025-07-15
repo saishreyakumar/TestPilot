@@ -275,15 +275,27 @@ def worker_heartbeat(worker_id: str):
 def get_stats():
     """Get system statistics"""
     try:
+        # Get all jobs and filter by status
+        all_jobs = job_store.list_jobs()
+        pending_jobs = job_store.list_jobs(status=JobStatus.PENDING)
+        running_jobs = job_store.list_jobs(status=JobStatus.RUNNING)
+        completed_jobs = job_store.list_jobs(status=JobStatus.COMPLETED)
+        failed_jobs = job_store.list_jobs(status=JobStatus.FAILED)
+        
+        # Get groups and workers
+        all_groups = job_store.list_groups()
+        all_workers = job_store.list_workers()
+        active_workers = [w for w in all_workers if w.status != "offline"]
+        
         stats = {
-            "total_jobs": len(job_store.jobs),
-            "pending_jobs": len([j for j in job_store.jobs.values() if j.status == JobStatus.PENDING]),
-            "running_jobs": len([j for j in job_store.jobs.values() if j.status == JobStatus.RUNNING]),
-            "completed_jobs": len([j for j in job_store.jobs.values() if j.status == JobStatus.COMPLETED]),
-            "failed_jobs": len([j for j in job_store.jobs.values() if j.status == JobStatus.FAILED]),
-            "total_groups": len(job_store.groups),
-            "total_workers": len(job_store.workers),
-            "active_workers": len([w for w in job_store.workers.values() if w.status != "offline"])
+            "total_jobs": len(all_jobs),
+            "pending_jobs": len(pending_jobs),
+            "running_jobs": len(running_jobs),
+            "completed_jobs": len(completed_jobs),
+            "failed_jobs": len(failed_jobs),
+            "total_groups": len(all_groups),
+            "total_workers": len(all_workers),
+            "active_workers": len(active_workers)
         }
         
         return jsonify(stats), 200
@@ -296,10 +308,6 @@ if __name__ == '__main__':
     from config import get_config
     config = get_config()
     
-    logger.info("🚀 Starting QualGent Job Orchestrator")
-    logger.info(f"📊 Storage: {'Redis' if isinstance(job_store, RedisJobStore) else 'In-Memory'}")
-    logger.info(f"🌐 Server: http://{config.HOST}:{config.PORT}")
-    logger.info(f"🔧 Environment: {os.environ.get('ENVIRONMENT', 'development')}")
     
     # Start the scheduler in a background thread
     scheduler.start()
