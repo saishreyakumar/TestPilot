@@ -6,6 +6,7 @@ This module handles configuration for Redis, storage options, and other settings
 
 import os
 from typing import Optional
+import logging
 
 
 class Config:
@@ -28,6 +29,8 @@ class Config:
     # Security (for production)
     SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
     
+    LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
+
     @classmethod
     def get_redis_config(cls) -> dict:
         """Get Redis configuration"""
@@ -53,6 +56,13 @@ class Config:
             'worker_timeout': cls.WORKER_TIMEOUT,
             'schedule_interval': cls.SCHEDULE_INTERVAL
         }
+
+    @classmethod
+    def configure_logging(cls):
+        logging.basicConfig(
+            level=getattr(logging, cls.LOG_LEVEL, logging.INFO),
+            format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+        )
 
 
 # Development configuration

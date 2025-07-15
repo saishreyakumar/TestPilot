@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Blueprint
 from flask_cors import CORS
 
 # Add parent directory to path to import shared modules
@@ -24,73 +24,39 @@ from shared import (
 from job_store import JobStore
 from redis_job_store import RedisJobStore
 from scheduler import JobScheduler
+from config import get_config
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging using config
+config = get_config()
+config.configure_logging()
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
-# Initialize job store with Redis (fallback to in-memory)
-def create_job_store():
-    """Create job store with Redis if available, fallback to in-memory"""
-    from config import get_config
-    config = get_config()
-    
-    if config.USE_REDIS:
-        try:
-            logger.info("Attempting to connect to Redis...")
-            job_store = RedisJobStore(config.REDIS_URL)
-            logger.info("✅ Using Redis for job storage")
-            return job_store
-        except Exception as e:
-            logger.warning(f"⚠️ Redis connection failed: {e}")
-            logger.info("🔄 Falling back to in-memory storage")
-    
-    # Fallback to in-memory storage
-    logger.info("📝 Using in-memory job storage")
-    return JobStore()
+# --- Blueprint setup ---
+jobs_bp = Blueprint('jobs', __name__)
+workers_bp = Blueprint('workers', __name__)
 
-# Initialize components
-job_store = create_job_store()
-scheduler = JobScheduler(job_store)
+def validate_required_fields(data, required_fields):
+    missing = [f for f in required_fields if f not in data]
+    if missing:
+        return False, f"Missing required field(s): {', '.join(missing)}"
+    return True, None
 
+def error_response(message, code=400):
+    return jsonify({"error": message}), code
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    storage_type = "redis" if isinstance(job_store, RedisJobStore) else "in-memory"
-    
-    health_data = {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0",
-        "storage": storage_type
-    }
-    
-    # Add Redis-specific health info
-    if isinstance(job_store, RedisJobStore):
-        try:
-            job_store.redis.ping()
-            health_data["redis_status"] = "connected"
-        except Exception as e:
-            health_data["redis_status"] = f"error: {str(e)}"
-    
-    return jsonify(health_data)
-
-
-@app.route('/jobs', methods=['POST'])
+# Move job routes to jobs_bp
+@jobs_bp.route('/jobs', methods=['POST'])
 def submit_job():
     """Submit a new test job"""
     try:
         data = request.get_json()
         
-        # Validate required fields
-        required_fields = ['org_id', 'app_version_id', 'test_path']
-        for field in required_fields:
-            if field not in data:
-                return jsonify({"error": f"Missing required field: {field}"}), 400
+        ok, err = validate_required_fields(data, ['org_id', 'app_version_id', 'test_path'])
+        if not ok:
+            return error_response(err, 400)
         
         # Create job payload
         payload = JobPayload.from_dict(data)
@@ -113,7 +79,7 @@ def submit_job():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/jobs/<job_id>', methods=['GET'])
+@jobs_bp.route('/jobs/<job_id>', methods=['GET'])
 def get_job_status(job_id: str):
     """Get job status and details"""
     try:
@@ -127,7 +93,7 @@ def get_job_status(job_id: str):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/jobs/<job_id>', methods=['PUT'])
+@jobs_bp.route('/jobs/<job_id>', methods=['PUT'])
 def update_job_status(job_id: str):
     """Update job status (used by workers)"""
     try:
@@ -164,7 +130,7 @@ def update_job_status(job_id: str):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/jobs', methods=['GET'])
+@jobs_bp.route('/jobs', methods=['GET'])
 def list_jobs():
     """List jobs with optional filtering"""
     try:
@@ -203,7 +169,8 @@ def list_job_groups():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/workers', methods=['POST'])
+# Move worker routes to workers_bp
+@workers_bp.route('/workers', methods=['POST'])
 def register_worker():
     """Register a new worker"""
     try:
@@ -233,7 +200,7 @@ def register_worker():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/workers', methods=['GET'])
+@workers_bp.route('/workers', methods=['GET'])
 def list_workers():
     """List all workers"""
     try:
@@ -247,7 +214,7 @@ def list_workers():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/workers/<worker_id>/heartbeat', methods=['POST'])
+@workers_bp.route('/workers/<worker_id>/heartbeat', methods=['POST'])
 def worker_heartbeat(worker_id: str):
     """Worker heartbeat endpoint"""
     try:
@@ -305,12 +272,35 @@ def get_stats():
 
 
 if __name__ == '__main__':
-    from config import get_config
-    config = get_config()
-    
+    # Initialize job store with Redis (fallback to in-memory)
+    def create_job_store():
+        """Create job store with Redis if available, fallback to in-memory"""
+        config = get_config()
+        
+        if config.USE_REDIS:
+            try:
+                logger.info("Attempting to connect to Redis...")
+                job_store = RedisJobStore(config.REDIS_URL)
+                logger.info("✅ Using Redis for job storage")
+                return job_store
+            except Exception as e:
+                logger.warning(f"⚠️ Redis connection failed: {e}")
+                logger.info("🔄 Falling back to in-memory storage")
+        
+        # Fallback to in-memory storage
+        logger.info("📝 Using in-memory job storage")
+        return JobStore()
+
+    # Initialize components
+    job_store = create_job_store()
+    scheduler = JobScheduler(job_store)
     
     # Start the scheduler in a background thread
     scheduler.start()
+    
+    # Register blueprints
+    app.register_blueprint(jobs_bp)
+    app.register_blueprint(workers_bp)
     
     # Run the Flask app
     app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG) 
